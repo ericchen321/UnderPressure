@@ -12,6 +12,7 @@ from skeletons import SkeletonSampler
 # Python
 import math, time
 from pathlib import Path
+import os
 
 # PyTorch
 import torch
@@ -127,14 +128,17 @@ class Trainer(util.Timeline):
 		)
 		
 		# logging support
-		self.ckp = kwargs["ckp"]
+		self.ckp_dir = kwargs["ckp_dir"]
+		os.makedirs(self.ckp_dir, exist_ok=True)
 		
 		# instanciate timeline
 		num_epochs = int(kwargs["iterations"] / len(dataloader) + 0.5)
+		print(f"num_epochs: {num_epochs}, len(dataloader): {len(dataloader)}")
 		super().__init__(dataloader, num_epochs, *[
 			util.Schedule(period=100,	fn=self._losses_logging),	# log loss values every X batches
-			util.Schedule(period=3000,	fn=self._validation),		# validation every X batches
+			util.Schedule(period=kwargs["validate_every"],	fn=self._validation),		# validation every X batches
 		])
+		print(f"initalized trainer")
 		
 	def iteration(self, batch):
 		angles, skeleton, trajectory, forces = batch["angles"], batch["skeleton"], batch["trajectory"], batch["forces"]
@@ -162,28 +166,32 @@ class Trainer(util.Timeline):
 		print("[{}/{}][{}/{}]   MSLE = {:.5e}".format(item, self.nitems, epoch, self.nepochs, self.msle))
 	
 	def _validation(self):
-		print("Validation #{}".format(self.iter))
+		print("Validation #{}".format(self.iter+1))
 		
 		# Make predictions
-		with self.model.frozen():
+		self.model.eval()
+		with torch.no_grad():
 			forces_pred = []
 			for positions in self.validset["positions"].split(128):
 				forces_pred.append(self.model.vGRFs(positions.to(self.device)).detach().cpu())
-			forces_pred = torch.cat(forces_pred)
-			
-		# compute and log msle and F1 score
-		contacts_rec = torch.cat([Contacts.from_forces(f) for f in forces_pred.split(128)])
-		msle = metrics.MSLE(forces_pred, target=self.validset["forces"]).item()
-		f1score = metrics.Fscore(contacts_rec, self.validset["contacts"])
-		if not hasattr(self, "best_f1score") or f1score >= self.best_f1score:
-			self.best_f1score = f1score
-			torch.save(dict(model=self.model.state_dict()), self.ckp)
+			forces_pred = torch.cat(forces_pred)			
+			# compute and log msle and F1 score
+			contacts_rec = torch.cat([Contacts.from_forces(f) for f in forces_pred.split(128)])
+			msle = metrics.MSLE(forces_pred, target=self.validset["forces"]).item()
+			f1score = metrics.Fscore(contacts_rec, self.validset["contacts"])
+			if not hasattr(self, "best_f1score") or f1score >= self.best_f1score:
+				self.best_f1score = f1score
+				torch.save(
+					dict(model=self.model.state_dict()),
+					f"{self.ckp_dir}/checkpoint+iter={self.iter+1:06d}.tar")
+		self.model.train()
+
 		print("MSLE={:.3e} F1={:.5f}".format(msle, f1score))
 
 if __name__ == "__main__":
 	from argparse import ArgumentParser
 	parser = ArgumentParser()
-	parser.add_argument("-ckp", default="./checkpoint.tar", type=Path,			help="Path to make checkpoint during training ........................ default: 'checkpoint.tar'")
+	parser.add_argument("-ckp_dir", default="./checkpoints/", type=Path,			help="Directory to save checkpoints during training ........................ default: 'checkpoint.tar'")
 	parser.add_argument("-device", default="cuda", type=str,					help="Device used to run training .................................... default: cuda")
 	parser.add_argument("-learning_rate", default=3e-5, type=float, 			help="Adam optimisation algorithm learning rate ...................... default: 3e-5")
 	parser.add_argument("-skeletons_basis_std", default=2.0, type=float,		help="Data augmentation skeletons SVD basis standard deviation ....... default: 2.0")
@@ -195,4 +203,5 @@ if __name__ == "__main__":
 	parser.add_argument("-split_ratio", default=0.9, type=float,				help="Train/Validation split ratio ................................... default: 0.9")
 	parser.add_argument("-sequence_length", default=240, type=int,				help="Training sequences length ...................................... default: 240")
 	parser.add_argument("-sequence_overlap", default=239, type=int,					help="Training sequences overlap ................................. default: 239")
+	parser.add_argument("-validate_every", default=3000, type=int,					help="Validated every this num of batches ................................. default: 3000")
 	Trainer(**vars(parser.parse_args())).run()

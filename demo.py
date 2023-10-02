@@ -10,6 +10,7 @@ from data import FRAMERATE, TOPOLOGY, Dataset
 from footskate import Cleaner
 from skeletons import Skeletons
 from visualization import MocapAndvGRFsApp
+from argparse import ArgumentParser
 
 # PyTorch
 import torch
@@ -17,6 +18,8 @@ import torch
 def vGRFs_estimation(model, device, subject, sequence):
 	testset = Dataset.testset("{}-{}".format(subject, sequence))
 	for item in testset:
+		# for k, v in item.items():
+		# 	print(f"{k}: {v.shape}")
 		angles, skeleton, trajectory, vGRFs_gt = item["angles"], item["skeleton"], item["trajectory"], item["forces"]
 		positions = anim.FK(angles, skeleton, trajectory, TOPOLOGY)
 		vGRFs_pred = model.vGRFs(positions.to(device).unsqueeze(0)).squeeze(0).cpu()
@@ -142,10 +145,8 @@ def footskate_cleanup(model, device, index):
 	).run()
 	
 if __name__ == "__main__":
-	from argparse import ArgumentParser
-	import sys
 	parser = ArgumentParser()
-	subparsers = parser.add_subparsers()
+	subparsers = parser.add_subparsers(dest="command")
 	
 	parser_vGRFs = subparsers.add_parser("vGRFs")
 	parser_vGRFs.add_argument("-subj", "-subject", default="*", help="Subject to be selected; default: *")
@@ -171,16 +172,16 @@ if __name__ == "__main__":
 	# load model
 	model = models.DeepNetwork(state_dict=torch.load(args.checkpoint)["model"]).to(args.device).eval()
 
-	if sys.argv[1] == "vGRFs":
+	if args.command == "vGRFs":
 		vGRFs_estimation(model, args.device, args.subj, args.seq)
-	elif sys.argv[1] == "contacts":
+	elif args.command == "contacts":
 		contacts_detection(model, args.device, args.subj, args.seq)
-	elif sys.argv[1] == "contacts_from_amass":
+	elif args.command == "contacts_from_amass":
 		joint_positions = torch.load(args.path).to(args.device)
 		framerate = args.framerate
 		skeleton = Skeletons.all()[args.skeleton].to(args.device)
 		contacts = contacts_detection_from_amass(model, joint_positions, framerate, skeleton)
-	elif sys.argv[1] == "cleanup":
+	elif args.command == "cleanup":
 		footskate_cleanup(model, args.device, args.idx)
 
 

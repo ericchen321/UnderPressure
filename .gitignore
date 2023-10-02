@@ -9,3 +9,6 @@ dataset/S*/moticon.txt
 dataset/S*/sync.csv
 dataset/S*/xsens.mvnx
 dataset/S*/preprocessed
+
+# checkpoints
+checkpoints/
